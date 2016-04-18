@@ -19,10 +19,28 @@ package de.schildbach.wallet.ui;
 
 import javax.annotation.Nullable;
 
+import java.io.BufferedInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.Currency;
+import java.util.Iterator;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.zip.GZIPInputStream;
+
 import org.bitcoinj.core.AddressFormatException;
 import org.bitcoinj.core.Coin;
 import org.bitcoinj.core.Wallet;
 import org.bitcoinj.utils.Fiat;
+
+import org.json.JSONObject;
+import org.json.JSONException;
 
 import android.app.Activity;
 import android.app.Fragment;
@@ -50,6 +68,10 @@ import de.schildbach.wallet.WalletApplication;
 import de.schildbach.wallet.service.BlockchainState;
 import de.schildbach.wallet.service.BlockchainStateLoader;
 import de.schildbach.wallet.ui.send.SendCoinsActivity;
+
+import de.schildbach.wallet.util.GenericUtils;
+import de.schildbach.wallet.util.Io;
+
 import subgeneius.dobbs.wallet.R;
 
 /**
@@ -84,6 +106,7 @@ public final class WalletBalanceFragment extends Fragment
 	private static final int ID_BLOCKCHAIN_STATE_LOADER = 2;
 
 	private static final long BLOCKCHAIN_UPTODATE_THRESHOLD_MS = DateUtils.HOUR_IN_MILLIS;
+    private static final long SATOSHI_IN_BTC = 100000000;
 	private static final Coin SOME_BALANCE_THRESHOLD = Coin.COIN.multiply(1000);
 	private static final Coin TOO_MUCH_BALANCE_THRESHOLD = Coin.COIN.multiply(2500000);
 
@@ -204,6 +227,63 @@ public final class WalletBalanceFragment extends Fragment
 		return super.onOptionsItemSelected(item);
 	}
 
+    public static Object getCoinValueBTC_bittrex()
+	{
+		Double btcRate = 0.0;
+		String currency = "BTC";
+		String url = "https://bittrex.com/api/v1.1/public/getticker?market=btc-bob";
+
+		try {
+			final URL URL_bittrex = new URL(url);
+			final HttpURLConnection connection = (HttpURLConnection)URL_bittrex.openConnection();
+			connection.setConnectTimeout(Constants.HTTP_TIMEOUT_MS * 2);
+			connection.setReadTimeout(Constants.HTTP_TIMEOUT_MS * 2);
+			connection.connect();
+
+			final StringBuilder content = new StringBuilder();
+
+			Reader reader = null;
+			try
+			{
+				reader = new InputStreamReader(new BufferedInputStream(connection.getInputStream(), 1024));
+				Io.copy(reader, content);
+				final JSONObject head = new JSONObject(content.toString());
+
+				/*
+				{"success":true,"message":"","result":{"Bid":0.00313794,"Ask":0.00321785,"Last":0.00315893}}
+				}*/
+				String result = head.getString("success");
+				if(result.equals("true"))
+				{
+					JSONObject dataObject = head.getJSONObject("result");
+
+					Double averageTrade = dataObject.getDouble("Last");
+
+
+					if(currency.equalsIgnoreCase("BTC"))
+						btcRate = averageTrade;
+				}
+				return btcRate;
+			}
+			finally
+			{
+				if (reader != null)
+					reader.close();
+			}
+
+		}
+		catch (final IOException x)
+		{
+			x.printStackTrace();
+		}
+		catch (final JSONException x)
+		{
+			x.printStackTrace();
+		}
+
+		return null;
+	}
+    
 	private void handleDonate()
 	{
 		try
@@ -280,12 +360,18 @@ public final class WalletBalanceFragment extends Fragment
 
 				if (showLocalBalance)
 				{
-					if (exchangeRate != null)
+                    
+                    long btcRate = 0;
+                    Object result = getCoinValueBTC_bittrex();
+            
+                    if (result != null)   
 					{
-						final Fiat localValue = exchangeRate.rate.coinToFiat(balance);
+                        btcRate = (long)((double)result * (double)SATOSHI_IN_BTC);
+                        Coin finalBalance = (balance.multiply(btcRate)).divide(SATOSHI_IN_BTC);
+
 						viewBalanceLocal.setVisibility(View.VISIBLE);
-						viewBalanceLocal.setFormat(Constants.LOCAL_FORMAT.code(0, Constants.PREFIX_ALMOST_EQUAL_TO + exchangeRate.getCurrencyCode()));
-						viewBalanceLocal.setAmount(localValue);
+                        viewBalanceLocal.setFormat(Constants.LOCAL_FORMAT.code(0, Constants.PREFIX_ALMOST_EQUAL_TO + "BTC"));
+                        viewBalanceLocal.setAmount(finalBalance);
 						viewBalanceLocal.setTextColor(getResources().getColor(R.color.fg_less_significant));
 					}
 					else
